@@ -1,0 +1,73 @@
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Twist
+from enum import Enum, auto
+import numpy as np
+
+class State(Enum):
+    APPROACHING = auto()
+    STOP = auto()
+
+class Tb3(Node):
+    ROBOT_WIDTH = 0.287  # Robot's width
+    TOLERANCE = 0.01    # Tolerance for stopping
+    MAX_SPEED_PERCENT = 50  # Maximum speed in percentage
+    FILTER_SIZE = 5  # Number of readings for moving average filter
+
+    def __init__(self):
+        super().__init__('tb3')
+        self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel', 1)
+        self.scan_sub = self.create_subscription(LaserScan, 'scan', self.scan_callback, qos_profile_sensor_data)
+        self.distance_readings = []  # To store recent distance readings
+        self.state = State.APPROACHING
+
+    def vel(self, lin_vel_percent, ang_vel_percent=0):
+        MAX_LIN_VEL = 0.26  # m/s
+        MAX_ANG_VEL = 1.82  # rad/s
+
+        cmd_vel_msg = Twist()
+        cmd_vel_msg.linear.x = MAX_LIN_VEL * lin_vel_percent / 100
+        cmd_vel_msg.angular.z = MAX_ANG_VEL * ang_vel_percent / 100
+
+        self.cmd_vel_pub.publish(cmd_vel_msg)
+
+    def scan_callback(self, msg):
+        current_distance = msg.ranges[0]
+        self.distance_readings.append(current_distance)
+
+        if len(self.distance_readings) > self.FILTER_SIZE:
+            self.distance_readings.pop(0)
+
+        filtered_distance = np.median(self.distance_readings)  # Using median filter
+        error = filtered_distance - self.ROBOT_WIDTH / 2 - self.TOLERANCE
+
+        if self.state == State.APPROACHING:
+            if error > 0:
+                speed_percent = self.calculate_speed_percent(error)
+                self.vel(speed_percent, 0)
+            else:
+                self.vel(0, 0)
+                self.state = State.STOP
+
+    def calculate_speed_percent(self, error):
+        proportional_gain = 0.5  # Adjust as needed for your robot
+        speed_percent = min(self.MAX_SPEED_PERCENT, max(0, error * proportional_gain * 100))
+        return speed_percent
+
+def main(args=None):
+    rclpy.init(args=args)
+    tb3 = Tb3()
+    print('waiting for messages...')
+
+    try:
+        rclpy.spin(tb3)
+    except KeyboardInterrupt:
+        pass
+
+    tb3.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
