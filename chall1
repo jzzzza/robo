@@ -1,0 +1,73 @@
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Twist
+
+class Tb3(Node):
+    def __init__(self):
+        super().__init__('tb3')
+
+        self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel', 1)
+        self.scan_sub = self.create_subscription(LaserScan, 'scan', self.scan_callback, qos_profile_sensor_data)
+
+        self.ang_vel_percent = 0
+        self.lin_vel_percent = 0
+
+        # Challenge-specific attributes
+        self.ROBOT_WIDTH = 0.28  # Adjust based on actual robot size
+        self.NOISE_TOLERANCE = 0.05  # Adjust based on sensor accuracy and environmental factors
+        self.state = 'FORWARD'  # Initial state
+
+    def vel(self, lin_vel_percent, ang_vel_percent=0):
+        """ Publishes linear and angular velocities in percent """
+        MAX_LIN_VEL = 0.26  # m/s
+        MAX_ANG_VEL = 1.82  # rad/s
+
+        cmd_vel_msg = Twist()
+        cmd_vel_msg.linear.x = MAX_LIN_VEL * lin_vel_percent / 100
+        cmd_vel_msg.angular.z = MAX_ANG_VEL * ang_vel_percent / 100
+
+        self.cmd_vel_pub.publish(cmd_vel_msg)
+        self.ang_vel_percent = ang_vel_percent
+        self.lin_vel_percent = lin_vel_percent
+
+    def scan_callback(self, msg):
+        """ Is run whenever a LaserScan msg is received """
+        front_distance = msg.ranges[0]  # Assuming front is at index 0
+        stopping_distance = self.calculate_stopping_distance(front_distance)
+
+        if self.state == 'FORWARD':
+            self.adjust_speed_for_stopping(stopping_distance)
+        elif self.state == 'STOP':
+            self.vel(0, 0)
+
+    def calculate_stopping_distance(self, distance_from_obstacle):
+        return distance_from_obstacle - (self.ROBOT_WIDTH / 2) - self.NOISE_TOLERANCE
+
+    def adjust_speed_for_stopping(self, stopping_distance):
+        if stopping_distance > 0:
+            # Simple proportional control for demonstration
+            speed_percent = min(100, max(10, stopping_distance * 50))  # Example calculation
+            self.vel(speed_percent, 0)
+        else:
+            self.state = 'STOP'
+
+def main(args=None):
+    rclpy.init(args=args)
+    tb3 = Tb3()
+    print('waiting for messages...')
+
+    try:
+        rclpy.spin(tb3)  # Execute tb3 node
+    except KeyboardInterrupt:
+        pass
+
+    tb3.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+
+Key Modifications:
+
